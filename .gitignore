@@ -11,3 +11,5 @@ package-lock.json
 /src/bind.rs
 Cargo.lock
 /.vscode
+GameGuardian.*
+/gg-v*

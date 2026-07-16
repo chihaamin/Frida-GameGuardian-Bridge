@@ -1,21 +1,30 @@
 [package]
 name = "FGGB"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["XEKEX <amin.chiha@gmail.com>"]
 repository = "https://github.com/chihaamin/FGGB"
 description = "Rusty Frida Bridge for GG Scripts"
 
+[[bin]]
+name = "FGGB"
+path = "src/main.rs"
+
 [dependencies]
-thiserror = "1"
+frida = { version = "0.17", features = ["auto-download"] }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "net"] }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.127"
-bindgen = "0.69.4"
-tokio = { version = "1", features = ["full"] }
+serde_json = "1.0"
+thiserror = "2"
+self_cell = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
-[build-dependencies]
-bindgen = "0.69.4"
-
-[dev-dependencies]
-lazy_static = "1"
-
+# frida 0.17.2 (crates.io) has a use-after-free in its script "message" callback that
+# fires on any console.log / uncaught JS error / plain send() from an injected script.
+# Upstream main fixes both the UB and RPC routing (stock rpc.exports works). The pinned
+# commit is still crate-version 0.17.2, so this patch satisfies the `version = "0.17"`
+# requirement above. Its frida-sys comes from the same git workspace.
+[patch.crates-io]
+frida = { git = "https://github.com/frida/frida-rust", rev = "415db91bd38fdbe07c3f49f7d60501307b4addb9" }

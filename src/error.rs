@@ -1,100 +1,50 @@
-/*
- * Copyright © 2022 Jean Marchand
- *
- * Licence: wxWindows Library Licence, Version 3.1
- */
+//! HTTP-facing error type. Maps engine/channel failures to status codes + a JSON body.
 
-use thiserror::Error;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
+use serde_json::json;
 
-/// Custom `Error` for Frida
-#[derive(Error, Debug)]
-pub enum Error {
-    /// Failed to attach to a device.
-    #[error("Failed to attach")]
-    DeviceAttachError,
+use crate::engine::EngineError;
 
-    /// Failled to lookup a device.
-    #[error("Failed to lookup device")]
-    DeviceLookupFailed,
+/// Error returned by HTTP handlers.
+#[derive(Debug)]
+pub enum AppError {
+    /// Request body was empty.
+    NoScript,
+    /// `pid` query parameter missing or unparseable.
+    NoPid,
+    /// The engine actor thread is gone or unresponsive.
+    EngineGone,
+    /// Referenced session id does not exist.
+    UnknownSession(u64),
+    /// Any other engine-side failure.
+    Engine(EngineError),
+}
 
-    /// Failled to enumerate a processes.
-    #[error("Failed to lookup device")]
-    ProcessesEnumerationFailed,
+impl From<EngineError> for AppError {
+    fn from(error: EngineError) -> Self {
+        match error {
+            EngineError::UnknownSession(id) => AppError::UnknownSession(id),
+            other => AppError::Engine(other),
+        }
+    }
+}
 
-    /// Failed to detach a session.
-    #[error("Failed to detach the current session")]
-    SessionDetachError,
-
-    /// Failed to create a script in a session.
-    #[error("Failed to create the script")]
-    ScriptCreationError,
-
-    /// Failled to load a script in a session.
-    #[error("Failed to load the script")]
-    LoadingFailed,
-
-    /// Failed to unload a script in a session.
-    #[error("Failed to unload the script")]
-    UnloadingFailed,
-
-    /// CString conversion failed.
-    #[error("Failed to convert the string into CString")]
-    CStringFailed,
-
-    /// Failed to inject library
-    #[error("Failed to inject library ({code}) {message}")]
-    InjectFailed {
-        /// Error code
-        code: i32,
-        /// Error message
-        message: String,
-    },
-
-    /// Failed to query device parameters
-    #[error("Failed to query device system parameters ({code}) {message}")]
-    DeviceQuerySystemParametersFailed {
-        /// Error code
-        code: i32,
-        /// Error message
-        message: String,
-    },
-
-    /// Failed to spawn program
-    #[error("Failed to spawn program ({code}) {message}")]
-    SpawnFailed {
-        /// Error code
-        code: i32,
-        /// Error message
-        message: String,
-    },
-
-    /// Failed to resume
-    #[error("Failed to resume ({code}) {message}")]
-    ResumeFailed {
-        /// Error code
-        code: i32,
-        /// Error message
-        message: String,
-    },
-
-    /// Failed to kill
-    #[error("Failed to kill PID ({code}) {message}")]
-    KillFailed {
-        /// Error code
-        code: i32,
-        /// Error message
-        message: String,
-    },
-
-    /// Received unexpected RPC message.
-    #[error("Unexpected RPC message received.")]
-    RpcUnexpectedMessage,
-
-    /// RPC JavaScript Error. The RPC communication was
-    /// successful but there was an error in the JavaScript side
-    #[error("Error on the JavaScript side: {message}")]
-    RpcJsError {
-        /// Error message from JavaScript.
-        message: String,
-    },
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let (status, message) = match self {
+            AppError::NoScript => (StatusCode::BAD_REQUEST, "no script provided".to_string()),
+            AppError::NoPid => (StatusCode::BAD_REQUEST, "no pid provided".to_string()),
+            AppError::EngineGone => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "frida engine unavailable".to_string(),
+            ),
+            AppError::UnknownSession(id) => {
+                (StatusCode::NOT_FOUND, format!("no session with id {id}"))
+            }
+            AppError::Engine(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+        };
+        (status, Json(json!({ "error": message }))).into_response()
+    }
 }
