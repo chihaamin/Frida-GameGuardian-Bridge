@@ -39,38 +39,34 @@ pub struct EngineHandle {
     pub join: JoinHandle<()>,
 }
 
-/// Spawn the engine actor thread. It obtains the Frida runtime and connects to
-/// frida-server at `host` itself (those objects must never leave this thread).
-pub fn spawn(host: String) -> EngineHandle {
+/// Spawn the engine actor thread. It obtains the Frida runtime and the local device
+/// (FGGB's own embedded frida-core injects directly, as root — no frida-server needed,
+/// so there is no client/server version to match). Those objects never leave the thread.
+pub fn spawn() -> EngineHandle {
     let (tx, rx) = mpsc::channel::<Command>(COMMAND_BUFFER);
     let (ready_tx, ready_rx) = oneshot::channel::<Result<(), String>>();
 
     let join = thread::Builder::new()
         .name("frida-engine".into())
-        .spawn(move || engine_main(host, rx, ready_tx))
+        .spawn(move || engine_main(rx, ready_tx))
         .expect("failed to spawn frida-engine thread");
 
     EngineHandle { tx, ready_rx, join }
 }
 
-/// Actor thread entry point: leak the singletons, connect, then run the loop.
-fn engine_main(
-    host: String,
-    rx: mpsc::Receiver<Command>,
-    ready_tx: oneshot::Sender<Result<(), String>>,
-) {
+/// Actor thread entry point: leak the singletons, open the local device, run the loop.
+fn engine_main(rx: mpsc::Receiver<Command>, ready_tx: oneshot::Sender<Result<(), String>>) {
     // Leak the three program-lifetime singletons so their lifetime parameters become
     // `'static` and the borrow chain is erased. There is exactly one of each for the
     // whole process; their `Drop` (frida_deinit / manager close) simply never runs.
     let frida: &'static Frida = Box::leak(Box::new(unsafe { Frida::obtain() }));
     let manager: &'static DeviceManager<'static> = Box::leak(Box::new(DeviceManager::obtain(frida)));
 
-    let device: &'static Device<'static> = match manager.get_remote_device(&host) {
+    let device: &'static Device<'static> = match manager.get_local_device() {
         Ok(device) => Box::leak(Box::new(device)),
         Err(err) => {
             let _ = ready_tx.send(Err(format!(
-                "could not reach frida-server at '{host}': {err} \
-                 (is frida-server running on the device and reachable over loopback?)"
+                "could not open local frida device: {err} (FGGB must run as root)"
             )));
             return;
         }
