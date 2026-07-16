@@ -70,10 +70,9 @@ async fn main() -> ExitCode {
                 };
 
                 match injected {
-                    // Already injected into this exact process: drain any bridge messages.
-                    Some((p, sid)) if p == pid => {
-                        for msg in drain(&tx, sid).await { tracing::info!("bridge: {msg}"); }
-                    }
+                    // Already injected into this exact process: nothing to do (the actor
+                    // logs the bridge's diagnostics as they arrive).
+                    Some((p, _)) if p == pid => {}
                     // New or restarted GG: inject the bridge.
                     _ => {
                         let ver = gg::version(&package).unwrap_or_else(|| "?".into());
@@ -100,16 +99,15 @@ async fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Inject the bridge agent into `pid`, returning the live session id.
+/// Inject the bridge agent into `pid` (with a ForwardHandler), returning its session id.
 async fn inject_bridge(
     tx: &tokio::sync::mpsc::Sender<Command>,
     pid: u32,
 ) -> Result<SessionId, String> {
     let (reply_tx, reply_rx) = oneshot::channel();
-    tx.send(Command::Inject {
+    tx.send(Command::InjectBridge {
         pid,
         source: BRIDGE_JS.to_string(),
-        name: Some("fggb-bridge".into()),
         reply: reply_tx,
     })
     .await
@@ -118,20 +116,5 @@ async fn inject_bridge(
         Ok(Ok(outcome)) => Ok(outcome.id),
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => Err("engine reply lost".to_string()),
-    }
-}
-
-/// Drain buffered bridge messages for a session (best effort).
-async fn drain(
-    tx: &tokio::sync::mpsc::Sender<Command>,
-    id: SessionId,
-) -> Vec<String> {
-    let (reply_tx, reply_rx) = oneshot::channel();
-    if tx.send(Command::DrainMessages { id, reply: reply_tx }).await.is_err() {
-        return Vec::new();
-    }
-    match reply_rx.await {
-        Ok(Ok(values)) => values.into_iter().map(|v| v.to_string()).collect(),
-        _ => Vec::new(),
     }
 }

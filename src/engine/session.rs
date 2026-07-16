@@ -7,7 +7,9 @@ use std::time::Instant;
 
 use frida::{Message, ScriptHandler};
 use serde_json::{json, Value};
+use tokio::sync::mpsc;
 
+use super::command::Command;
 use super::live::LiveScript;
 
 /// Opaque, monotonically-increasing session identifier.
@@ -78,6 +80,33 @@ impl ScriptHandler for BufferHandler {
                 queue.pop_front();
             }
             queue.push_back(value);
+        }
+    }
+}
+
+/// [`ScriptHandler`] for the GG bridge session: instead of buffering, it forwards each
+/// `send()` payload to the actor as [`Command::BridgeMessage`], which the actor services
+/// (attach to GG's target, run code, etc.) and replies to. Runs on frida's dispatcher
+/// thread, so it uses the non-blocking `try_send`.
+pub struct ForwardHandler {
+    bridge_id: SessionId,
+    tx: mpsc::Sender<Command>,
+}
+
+impl ForwardHandler {
+    pub fn new(bridge_id: SessionId, tx: mpsc::Sender<Command>) -> Self {
+        Self { bridge_id, tx }
+    }
+}
+
+impl ScriptHandler for ForwardHandler {
+    fn on_message(&mut self, message: Message, _data: Option<Vec<u8>>) {
+        // Only `send()` payloads carry bridge requests; ignore log/error/rpc.
+        if let Message::Send(send) = message {
+            let _ = self.tx.try_send(Command::BridgeMessage {
+                bridge_id: self.bridge_id,
+                payload: send.payload,
+            });
         }
     }
 }

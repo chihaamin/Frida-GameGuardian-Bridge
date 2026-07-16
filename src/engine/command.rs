@@ -30,6 +30,19 @@ pub enum Command {
         name: Option<String>,
         reply: Reply<InjectOutcome>,
     },
+    /// Inject the GG bridge agent into `pid` with a `ForwardHandler` — its messages are
+    /// forwarded back to the actor as [`Command::BridgeMessage`] so they can be serviced.
+    InjectBridge {
+        pid: u32,
+        source: String,
+        reply: Reply<InjectOutcome>,
+    },
+    /// A message emitted by a bridge agent (forwarded from the frida dispatcher thread).
+    /// The actor routes it (`frida.run`/`pull`/…) and posts a reply back to the bridge.
+    BridgeMessage {
+        bridge_id: SessionId,
+        payload: Value,
+    },
     /// Call an `rpc.exports.<function>` on a live session.
     Rpc {
         id: SessionId,
