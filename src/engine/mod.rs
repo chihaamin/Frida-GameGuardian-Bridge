@@ -225,16 +225,23 @@ impl Engine {
     /// Route a bridge request op to the matching engine action, returning a reply body.
     fn route_bridge_op(&mut self, op: &str, payload: &Value) -> Value {
         match op {
-            // Run `code` inside GG's target `pid`; return the session id + its top-level output.
+            // Run `code` inside GG's target `pid`; return the session id + its top-level
+            // output. `keep` (default true) leaves the session loaded (for `pull` / hooks);
+            // one-shot helpers pass keep=false so the target session is detached right after.
             "run" => {
                 let pid = payload.get("pid").and_then(Value::as_u64).map(|p| p as u32);
                 let code = payload.get("code").and_then(Value::as_str).map(String::from);
+                let keep = payload.get("keep").and_then(Value::as_bool).unwrap_or(true);
                 match (pid, code) {
                     (Some(pid), Some(code)) => {
                         match self.inject(pid, code, Some("fggb-target".into())) {
                             Ok(out) => {
                                 thread::sleep(RUN_SETTLE);
-                                json!({ "ok": true, "sid": out.id.0, "messages": self.drain_values(out.id) })
+                                let messages = self.drain_values(out.id);
+                                if !keep {
+                                    let _ = self.kill(out.id);
+                                }
+                                json!({ "ok": true, "sid": out.id.0, "messages": messages })
                             }
                             Err(e) => json!({ "ok": false, "error": e.to_string() }),
                         }
